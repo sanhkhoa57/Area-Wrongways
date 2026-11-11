@@ -1,6 +1,8 @@
 'use strict';
 /* Web Worker của chủ phòng: chạy luật chơi (wrongway/environment.py) bằng Pyodide. */
-const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';
+// Pyodide được đặt sẵn trong repo (web/vendor/pyodide) để không phụ thuộc CDN, vì một số nhà mạng chặn jsdelivr.
+const PYODIDE = new URL('vendor/pyodide/', self.location.href).href;
+const PYODIDE_CDN = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';   // chỉ dùng để tải thêm gói như numpy
 importScripts(PYODIDE + 'pyodide.js');
 
 let py = null;

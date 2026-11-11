@@ -1,12 +1,16 @@
 'use strict';
 /* Web Worker chạy bot của người chơi bằng Pyodide.
    Bị terminate khi quá giờ; trang chính sẽ tạo worker mới. */
-const PYODIDE = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';
+// Pyodide được đặt sẵn trong repo (web/vendor/pyodide) để không phụ thuộc CDN, vì một số nhà mạng chặn jsdelivr.
+const PYODIDE = new URL('vendor/pyodide/', self.location.href).href;
+const PYODIDE_CDN = 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';   // chỉ dùng để tải thêm gói như numpy
 importScripts(PYODIDE + 'pyodide.js');
 
 let py = null;
 const booted = (async () => {
   py = await loadPyodide({ indexURL: PYODIDE });
+  // Lõi Python lấy từ repo; các gói thêm (numpy, ...) không có sẵn thì tải từ CDN.
+  try { py._api.config.indexURL = PYODIDE_CDN; } catch (_) { /* bản Pyodide khác: bỏ qua */ }
   py.setStdout({ batched() {} });
   py.setStderr({ batched() {} });
   const src = await (await fetch(new URL('py/bot_harness.py', self.location.href))).text();

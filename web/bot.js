@@ -75,7 +75,7 @@ class WorkerRpc {
 /* ---------------------------------------------------------------- Bot */
 class Bot {
   constructor() {
-    this.rpc = new WorkerRpc(WEB_BASE + 'worker_bot.js');
+    this.rpc = new WorkerRpc(WEB_BASE + 'worker_bot.js?v=7');
     this.code = null;
     this.seed = 0;
     this.loaded = false;
@@ -143,7 +143,7 @@ class Bot {
 
 /* ------------------------------------------------------------- Engine */
 class Engine {
-  constructor() { this.rpc = new WorkerRpc(WEB_BASE + 'worker_engine.js'); }
+  constructor() { this.rpc = new WorkerRpc(WEB_BASE + 'worker_engine.js?v=7'); }
   get ready() { return this.rpc.ready; }
   async call(fn, ...args) {
     await this.rpc.ready;

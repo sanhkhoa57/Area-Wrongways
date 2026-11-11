@@ -1,101 +1,76 @@
-# Wrongway Online
+# Area Wrongways
 
-Web đấu bot Wrongway 1 chọi 1, mỗi trận 2 hiệp đổi bên, xem trực tiếp từng nước đi trên một terminal ở giữa màn hình. Máy chủ gọi thẳng `arena.run_match` trong thư mục `wrongway`, nên luật chơi, giới hạn 1 giây/nước và cách tính lượt giống hệt khi chạy `arena.py` trên máy.
+Web đấu bot Wrongway 1 chọi 1, mỗi trận 2 hiệp đổi bên, xem trực tiếp từng nước đi trên một terminal ở giữa màn hình.
 
-## Cài đặt và chạy
+Đây là **web tĩnh, không có máy chủ**. Mọi thứ chạy trong trình duyệt, nên đưa lên GitHub Pages hoặc Vercel là dùng được, miễn phí và luôn bật.
 
-Cần Python 3.9 trở lên.
+## Cách hoạt động
 
-**Windows**
-
-```bat
-cd wrongway-web
-py -3 -m pip install -r requirements.txt
-py -3 app.py
+```
+Trình duyệt A (chủ phòng)                          Trình duyệt B
+┌────────────────────────────┐   PeerJS (WebRTC)   ┌─────────────────────┐
+│ Host (host.js)             │◄───────────────────►│ app.js              │
+│  ├ luật chơi: environment.py│  prepare / act_req  │ bot.js              │
+│  │   (Pyodide, worker)      │  act_res / turn …   │  └ bot của B        │
+│  └ bot của A (Pyodide)      │                     │     (Pyodide, worker)│
+└────────────────────────────┘                     └─────────────────────┘
 ```
 
-Hoặc bấm đúp `run_windows.bat`.
+- **Phòng chơi:** chủ phòng mở một kết nối PeerJS có id `wrongway-area-<mã 4 số>`, người kia nhập mã để nối thẳng tới. Id đã bị chiếm thì tự chọn mã khác, nên hai phòng không bao giờ trùng mã.
+- **Luật chơi:** vẫn là `wrongway/environment.py` nguyên bản, chạy bằng Pyodide (Python trong trình duyệt) trên máy chủ phòng.
+- **Bot:** chạy bằng Pyodide trong Web Worker **trên máy của chính người viết bot**. Mỗi lượt chủ phòng gửi quan sát, bot trả về nước đi. Code bot không bao giờ rời khỏi máy của người viết, và máy chủ không phải chạy code lạ.
+- **Quá giờ:** bot nghĩ quá 2 giây thì worker bị dừng, lượt đó bị bỏ, lượt sau nạp lại code (giống bản Python gốc). Giới hạn là 2 giây thay vì 1 giây vì Python trong trình duyệt chậm hơn.
 
-**macOS / Linux**
-
-```bash
-cd wrongway-web
-python3 -m pip install -r requirements.txt
-python3 app.py
-```
-
-Mở `http://localhost:8000`. Người khác trong cùng mạng LAN/Wi-Fi vào bằng `http://<IP-máy-chạy-server>:8000` (xem IP bằng `ipconfig` trên Windows). Lần đầu chạy, Windows có thể hỏi quyền tường lửa cho Python; cần bấm Allow thì máy khác mới vào được.
-
-Muốn chạy kiểu dev có tự tải lại khi sửa code:
-
-```bash
-uvicorn app:app --host 0.0.0.0 --port 8000 --reload
-```
+Bot dùng được thư viện chuẩn của Python và các gói Pyodide có sẵn như `numpy` (tự tải khi `import`).
 
 ## Cách chơi
 
-1. Người thứ nhất bấm **Tạo phòng**, nhập Tên và MSSV, nhận mã phòng 4 số. Nút "Sao chép link" cho ra link dạng `/?room=0482`, người nhận mở link là form Vào phòng đã điền sẵn mã.
+1. Người thứ nhất bấm **Tạo phòng**, nhập Tên và MSSV, nhận mã phòng 4 số. Nút "Sao chép link" cho ra link dạng `?room=0482`.
 2. Người thứ hai bấm **Vào phòng**, nhập Tên, MSSV và mã phòng.
-3. Mỗi người bấm **ADD BOT** trong cột phải, dán code (theo `TEMPLATE.py`) hoặc tải file `.py`, rồi bấm **Sẵn sàng**. Server kiểm tra cú pháp và hàm `choose_action` ngay lúc này, có lỗi thì báo dưới khung code.
-4. Khi cả hai đã sẵn sàng: đếm ngược 3‑2‑1, hiệp 1 chạy với chủ phòng là P0 (góc dưới trái), người còn lại là P1 (góc trên phải).
-5. Hết hiệp 1, hai thẻ người chơi đổi chỗ cho nhau, đếm ngược lần nữa rồi chạy hiệp 2.
-6. Xong hai hiệp, bảng tổng kết hiện kết quả từng hiệp và người thắng chung cuộc. Điểm tính như mùa giải: thắng 3, hòa 1, thua 0. Hai bên bằng điểm thì xử hòa.
-7. "Chơi lại (giữ bot)" đánh dấu sẵn sàng với code cũ. "Đổi code bot" mở lại khung soạn thảo.
+3. Mỗi người bấm **ADD BOT**, dán code (theo `wrongway/submissions/TEMPLATE.py`) hoặc tải file `.py`, rồi bấm **Sẵn sàng**. Cú pháp và hàm `choose_action` được kiểm tra ngay.
+4. Khi cả hai sẵn sàng: đếm ngược 3-2-1, hiệp 1 chạy với chủ phòng là P0 (góc dưới trái), người còn lại là P1 (góc trên phải).
+5. Hết hiệp 1, hai bên đổi chỗ, đếm ngược rồi chạy hiệp 2.
+6. Bảng tổng kết hiện kết quả từng hiệp và người thắng chung cuộc. Điểm: thắng 3, hòa 1, thua 0. Bằng điểm thì hòa.
 
-## Các quy tắc phòng đã cài
+## Lưu ý khi dùng
 
-- Tối đa 2 người mỗi phòng. Hai người trong cùng phòng không được trùng MSSV.
-- Mã phòng 4 số được chọn ngẫu nhiên trong các mã chưa dùng, nên hai phòng đang hoạt động không bao giờ trùng mã.
-- Phòng hết người thì bị xóa khỏi RAM và mã được trả lại ngay, phòng mới sau đó có thể nhận lại mã này.
-- Chủ phòng thoát (bấm Rời phòng, đóng tab hay mất mạng) thì người còn lại lên làm chủ phòng.
-- Có người thoát giữa trận thì trận bị hủy, các tiến trình bot bị dừng, phòng quay về trạng thái chờ.
-- Code của đối thủ không bao giờ được gửi về trình duyệt của bạn, bạn chỉ thấy họ đã sẵn sàng hay chưa.
-- Hai hiệp dùng chung một seed, nên bot dùng `random` cũng được đối xử như nhau ở hai bên.
+- **Chủ phòng phải giữ nguyên tab.** Chủ phòng đóng tab hoặc mất mạng thì phòng đóng. Người vào phòng thoát giữa trận thì trận bị hủy.
+- Lần đầu vào phòng, trình duyệt tải Python (khoảng 10 MB từ CDN, sau đó được cache), nên có thể mất vài giây.
+- Kết nối trực tiếp (WebRTC) đôi khi không thông được qua một số mạng công ty hoặc trường học chặn. Khi đó thử đổi mạng (ví dụ 4G).
+- Kết quả trận do trình duyệt của chủ phòng tính. Đây là web để đấu giao hữu, không phải hệ thống chấm điểm chống gian lận.
 
-## Cấu hình
+## Chạy thử trên máy
 
-Đặt biến môi trường trước khi chạy (ví dụ `set WW_TURN_DELAY=0.1` trên Windows CMD):
+Chỉ cần một web server tĩnh bất kỳ:
 
-| Biến | Mặc định | Ý nghĩa |
-| --- | --- | --- |
-| `WW_TIMEOUT` | `1.0` | Giây cho mỗi lần gọi `choose_action` |
-| `WW_STARTUP_TIMEOUT` | `5.0` | Giây cho phép import file bot |
-| `WW_MAX_TURNS` | `500` | Giới hạn tổng số lượt, quá thì hòa |
-| `WW_TURN_DELAY` | `0.25` | Giây nghỉ giữa hai lượt để người xem kịp nhìn. Không tính vào giờ của bot |
-| `HOST` / `PORT` | `0.0.0.0` / `8000` | Địa chỉ lắng nghe |
+```bash
+python -m http.server 8000
+```
 
-Một ván hòa 500 lượt với delay 0.25 giây kéo dài khoảng 2 phút. Nếu thấy chậm, hạ `WW_TURN_DELAY` xuống 0.1.
+Rồi mở http://localhost:8000. Mở thêm một tab (hoặc trình duyệt khác) để đóng vai người chơi thứ hai.
+
+## Đưa lên mạng
+
+Không cần build, không cần biến môi trường.
+
+- **GitHub Pages:** Settings → Pages → Source: `Deploy from a branch`, Branch: `main`, Folder: `/ (root)`.
+- **Vercel:** Add New Project → chọn repo → Framework Preset: `Other`, để trống Build Command và Output Directory.
 
 ## Cấu trúc thư mục
 
 ```
-wrongway-web/
-├── app.py              # FastAPI + WebSocket: phòng, ID, đổi chủ phòng, chạy 2 hiệp
-├── requirements.txt
-├── run_windows.bat
-├── static/
-│   ├── index.html      # sảnh + phòng đấu
+├── index.html              # sảnh + phòng đấu
+├── web/
 │   ├── style.css
-│   └── app.js          # client WebSocket, terminal, ADD BOT, đếm ngược, bảng kết quả
-├── wrongway/           # bộ mã gốc, giữ nguyên không sửa
-└── runtime/            # tự tạo khi chạy: nơi lưu tạm file bot của từng phòng
+│   ├── app.js              # giao diện, kết nối PeerJS, terminal, ADD BOT, kết quả
+│   ├── host.js             # "máy chủ" phòng chạy trong trình duyệt chủ phòng
+│   ├── bot.js              # bọc Web Worker chạy bot, giới hạn thời gian
+│   ├── worker_bot.js       # Pyodide chạy bot của người chơi
+│   ├── worker_engine.js    # Pyodide chạy luật chơi
+│   └── py/
+│       ├── bot_harness.py  # kiểm tra code, nạp module, gọi choose_action
+│       └── engine_glue.py  # bọc environment.py cho worker
+└── wrongway/               # bộ mã gốc (CLI arena.py, luật chơi, bài mẫu)
 ```
 
-## Luồng dữ liệu
-
-```
-Trình duyệt ──WebSocket /ws──► app.py ──asyncio.to_thread──► arena.run_match()
-     ▲                           │                               │ on_turn(record)
-     └──── room / countdown / ───┘◄── call_soon_threadsafe ──────┘
-           round_start / turn / round_end / match_end
-```
-
-Mỗi lượt, server vẽ bàn cờ bằng `visualizer.render_board` (đúng chuỗi ASCII mà `arena.py --render` in ra) và gửi xuống. Trình duyệt chỉ tô màu cho chuỗi đó: quân 0 xanh ngọc, quân 1 cam, tường tím.
-
-Tin client gửi lên: `create`, `join`, `leave`, `ready` (kèm `code`), `unready`.
-
-## Lưu ý bảo mật
-
-`agent_runner.py` chỉ cô lập lỗi chứ không cô lập quyền truy cập: bot chạy dưới quyền của người chạy server, đọc/ghi được file và vào được mạng. Chỉ nên mở server cho nhóm bạn cùng lớp tin tưởng nhau. Nếu cần đưa lên Internet, hãy chạy trong container (Docker) hoặc máy ảo không chứa dữ liệu quan trọng.
-
-Toàn bộ phòng nằm trong RAM. Tắt server là mất hết phòng, đó là hành vi mong muốn cho một buổi đấu trên lớp.
+Muốn chạy bot trên máy bằng dòng lệnh (không cần web), xem `wrongway/STUDENT_GUIDE.md`.

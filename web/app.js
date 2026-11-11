@@ -2,7 +2,8 @@
 
 /* =====================================================================
    Wrongway Online – client
-   Một kết nối WebSocket duy nhất; mọi thay đổi trạng thái đều do server
+   Không có máy chủ riêng: chủ phòng chạy Host (host.js) ngay trong trình duyệt,
+   mọi người nối với nhau qua PeerJS. Mọi thay đổi trạng thái đều do Host
    gửi xuống (type: room / countdown / round_start / turn / ...).
    ===================================================================== */
 
@@ -16,7 +17,8 @@ const store = {
 };
 
 const S = {
-  ws: null,
+  bot: null,           // WW.Bot: worker Python chạy bot của mình
+  readyCode: null,     // code đã được duyệt khi bấm Sẵn sàng (chỉ nằm trên máy mình)
   me: null,            // id của mình
   room: null,          // trạng thái phòng mới nhất từ server
   mode: 'create',
@@ -36,38 +38,116 @@ const REASON = {
 };
 const STATUS_VI = { ok: 'ok', pass: 'pass', invalid: 'invalid', timeout: 'timeout', error: 'error' };
 
-/* ---------------------------------------------------------------- WS */
-function connect() {
-  if (S.ws && S.ws.readyState === WebSocket.OPEN) return Promise.resolve(S.ws);
+/* ------------------------------------------------------------ Mạng (PeerJS) */
+/* Chủ phòng mở một Peer có id cố định `wrongway-area-<mã 4 số>`; người vào phòng
+   nối thẳng tới id đó. Nhờ vậy mã phòng tự không trùng: id đã bị chiếm thì chọn mã khác.
+   Chủ phòng chạy Host (host.js) ngay trong trang; người vào phòng chỉ gửi/nhận tin. */
+const PEER_PREFIX = 'wrongway-area-';
+
+function openPeer(id) {
   return new Promise((resolve, reject) => {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
-    let opened = false;
-    ws.onopen = () => { opened = true; S.ws = ws; resolve(ws); };
-    ws.onerror = () => { if (!opened) reject(new Error('Không kết nối được tới máy chủ.')); };
-    ws.onclose = () => {
-      if (S.ws !== ws) return;
-      S.ws = null;
-      if (S.room) { toast('Mất kết nối tới máy chủ. Bạn đã bị đưa về sảnh.', 'bad'); backHome(); }
-    };
-    ws.onmessage = e => {
-      let msg;
-      try { msg = JSON.parse(e.data); } catch { return; }
-      const fn = handlers[msg.type];
-      if (fn) fn(msg);
-    };
+    if (typeof Peer === 'undefined') return reject({ type: 'no-lib' });
+    const peer = id ? new Peer(id) : new Peer();
+    const timer = setTimeout(() => { try { peer.destroy(); } catch { /* đã hủy */ } reject({ type: 'timeout' }); }, 15000);
+    peer.on('open', () => {
+      clearTimeout(timer);
+      peer.on('error', e => console.warn('peer error', e));
+      peer.on('disconnected', () => { try { peer.reconnect(); } catch { /* đã hủy */ } });
+      resolve(peer);
+    });
+    peer.on('error', e => { clearTimeout(timer); try { peer.destroy(); } catch { /* đã hủy */ } reject(e); });
   });
 }
 
-function send(msg) {
-  if (S.ws && S.ws.readyState === WebSocket.OPEN) S.ws.send(JSON.stringify(msg));
-  else toast('Chưa kết nối tới máy chủ.', 'bad');
+function netError(e, fallback) {
+  if (e && e.type === 'no-lib') return 'Không tải được thư viện kết nối (PeerJS). Kiểm tra mạng rồi tải lại trang.';
+  if (e && e.type === 'timeout') return 'Hết thời gian chờ máy chủ ghép phòng. Thử lại sau.';
+  if (e && e.type === 'peer-unavailable') return 'Không tìm thấy phòng này. Kiểm tra lại mã phòng, và chủ phòng phải đang mở trang.';
+  return fallback || 'Không kết nối được. Kiểm tra mạng rồi thử lại.';
 }
+
+function dispatch(msg) {
+  const fn = handlers[msg && msg.type];
+  if (fn) fn(msg);
+}
+
+const Net = {
+  peer: null,
+  conn: null,        // người vào phòng: kết nối tới chủ phòng
+  host: null,        // chủ phòng: Host đang chạy trong trang
+  engine: null,
+  localConn: null,
+  remotes: new Set(),
+  isHost: false,
+
+  send(msg) {
+    if (this.isHost && this.host) queueMicrotask(() => this.host && this.host.handle(this.localConn, msg));
+    else if (this.conn && this.conn.open) this.conn.send(msg);
+    else toast('Chưa kết nối tới phòng.', 'bad');
+  },
+
+  async startHost(name, mssv) {
+    this.close();
+    this.isHost = true;
+    this.engine = new WW.Engine();            // bắt đầu tải Python (luật chơi) ngay
+    let peer = null, code = null;
+    for (let i = 0; i < 40 && !peer; i++) {
+      code = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+      try { peer = await openPeer(PEER_PREFIX + code); }
+      catch (e) { if (!e || e.type !== 'unavailable-id') throw e; }
+    }
+    if (!peer) throw { type: 'timeout' };
+    this.peer = peer;
+    this.localConn = { player: null, send: m => queueMicrotask(() => dispatch(m)) };
+    this.host = new WW.Host(code, this.engine, () => setTimeout(() => backHomeIfHost(), 0));
+    peer.on('connection', dc => {
+      const wrap = { player: null, dc, send: m => { try { dc.send(m); } catch { /* đã đóng */ } } };
+      this.remotes.add(wrap);
+      dc.on('data', m => { if (m && typeof m === 'object' && this.host) this.host.handle(wrap, m); });
+      const gone = () => { this.remotes.delete(wrap); if (this.host) this.host.drop(wrap); };
+      dc.on('close', gone);
+      dc.on('error', gone);
+    });
+    this.send({ type: 'create', name, mssv });
+  },
+
+  async startJoin(name, mssv, room) {
+    this.close();
+    this.isHost = false;
+    const peer = await openPeer(null);
+    this.peer = peer;
+    const conn = peer.connect(PEER_PREFIX + room, { reliable: true, serialization: 'json' });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject({ type: 'peer-unavailable' }), 15000);
+      conn.on('open', () => { clearTimeout(timer); resolve(); });
+      peer.on('error', e => { clearTimeout(timer); reject(e); });
+      conn.on('error', e => { clearTimeout(timer); reject(e); });
+    });
+    this.conn = conn;
+    conn.on('data', dispatch);
+    conn.on('close', () => {
+      if (this.conn !== conn) return;
+      if (S.room) { toast('Mất kết nối tới chủ phòng. Bạn đã bị đưa về sảnh.', 'bad'); backHome(); }
+    });
+    this.send({ type: 'join', name, mssv, room });
+  },
+
+  close() {
+    const { peer, engine } = this;
+    this.peer = null; this.conn = null; this.host = null; this.engine = null;
+    this.localConn = null; this.isHost = false; this.remotes.clear();
+    if (engine) engine.dispose();
+    // Chờ một chút để tin cuối (closed / left) kịp tới nơi trước khi ngắt kết nối.
+    if (peer) setTimeout(() => { try { peer.destroy(); } catch { /* đã hủy */ } }, 600);
+  },
+};
+
+function backHomeIfHost() { if (Net.isHost && S.room) backHome(); }
 
 const handlers = {
   error(m) {
     S.pending = false;
-    if (!S.room) { showFormError(m.message); setFormBusy(false); }
+    if (!S.room) { showFormError(m.message); setFormBusy(false); Net.close(); }
     else { toast(m.message, 'bad'); renderPanels(); }
   },
   joined(m) { S.me = m.you; S.room = m.room; enterArena(); },
@@ -91,9 +171,30 @@ const handlers = {
     S.live = null;
     renderRoom();
   },
+  closed(m) { toast(m.reason, 'bad'); backHome(); },
   left() { backHome(); },
   pong() {},
+
+  /* Chủ phòng nhờ máy mình nạp bot cho hiệp mới. */
+  prepare(m) {
+    const bot = S.bot;
+    if (!bot || S.readyCode == null) {
+      send({ type: 'prepared', id: m.id, ok: false, error: 'Chưa có code bot' });
+      return;
+    }
+    bot.load(S.readyCode, m.seed).then(r => send({ type: 'prepared', id: m.id, ok: r.ok, error: r.error ?? null }));
+  },
+  /* Chủ phòng hỏi nước đi: chạy choose_action trên máy mình (có giới hạn thời gian). */
+  act_req(m) {
+    const bot = S.bot;
+    if (!bot) { send({ type: 'act_res', id: m.id, status: 'error', action: null, elapsed: 0, error: 'Chưa có bot' }); return; }
+    bot.act(m.obs).then(r => send({
+      type: 'act_res', id: m.id, status: r.status, action: r.action, elapsed: r.elapsed, error: r.error,
+    }));
+  },
 };
+
+function send(msg) { Net.send(msg); }
 
 /* -------------------------------------------------------------- Sảnh */
 function openForm(mode, roomId = '') {
@@ -139,10 +240,11 @@ async function submitEntry(e) {
   showFormError('');
   setFormBusy(true);
   try {
-    await connect();
-    send(S.mode === 'create' ? { type: 'create', name, mssv } : { type: 'join', name, mssv, room });
+    if (S.mode === 'create') await Net.startHost(name, mssv);
+    else await Net.startJoin(name, mssv, room);
   } catch (err) {
-    showFormError(err.message);
+    Net.close();
+    showFormError(netError(err));
     setFormBusy(false);
   }
 }
@@ -161,11 +263,20 @@ function enterArena() {
   S.drawerOpen = false;
   history.replaceState(null, '', `?room=${S.room.id}`);
   termLog(`Đã vào phòng ${S.room.id}. Bấm ADD BOT, dán code theo TEMPLATE.py rồi bấm Sẵn sàng.`, 'muted');
+  // Bot chạy ngay trên máy mình bằng Python trong trình duyệt (Pyodide): bắt đầu tải từ giờ.
+  if (S.bot) S.bot.dispose();
+  S.bot = new WW.Bot();
+  S.readyCode = null;
+  termLog('Đang tải Python trong trình duyệt (lần đầu mất vài giây)…', 'muted');
+  S.bot.rpc.ready.then(() => termLog('Python đã sẵn sàng.', 'muted'),
+    err => termLog(`Không tải được Python: ${err.message}`, 'bad'));
   renderRoom();
 }
 
 function backHome() {
-  S.room = null; S.me = null; S.live = null; S.pending = false;
+  S.room = null; S.me = null; S.live = null; S.pending = false; S.readyCode = null;
+  if (S.bot) { S.bot.dispose(); S.bot = null; }
+  Net.close();
   hideCountdown(); closeModal();
   $('#arena').classList.add('hidden');
   $('#home').classList.remove('hidden');
@@ -371,7 +482,13 @@ function buildMyPanel() {
     S.pending = true;
     showCodeError('');
     renderPanels();
-    send({ type: 'ready', code: ta.value });
+    // Code được kiểm tra và giữ ngay trên máy mình; chỉ có tín hiệu "sẵn sàng" gửi đi.
+    const code = ta.value;
+    S.bot.check(code).then(problem => {
+      if (problem) { S.pending = false; showCodeError(problem); renderPanels(); return; }
+      S.readyCode = code;
+      send({ type: 'ready' });
+    });
   });
   return el;
 }
@@ -641,13 +758,13 @@ $('#entryForm').addEventListener('submit', submitEntry);
 $('#entryForm').room.addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
 $('#leaveBtn').addEventListener('click', () => send({ type: 'leave' }));
 $('#copyBtn').addEventListener('click', async () => {
-  const link = `${location.origin}/?room=${S.room?.id ?? ''}`;
+  const link = `${location.origin}${location.pathname}?room=${S.room?.id ?? ''}`;
   try { await navigator.clipboard.writeText(link); toast('Đã sao chép link mời: ' + link, 'good'); }
   catch { toast('Link mời: ' + link); }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
-fetch('/api/template').then(r => r.text()).then(t => {
+fetch('wrongway/submissions/TEMPLATE.py').then(r => r.text()).then(t => {
   S.template = t;
   if (S.myPanel) {
     const ta = $('.code', S.myPanel);

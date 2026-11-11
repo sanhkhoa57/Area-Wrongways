@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wrongway Arena · Online</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1013'/%3E%3Ctext x='16' y='23' font-family='monospace' font-weight='800' font-size='20' text-anchor='middle' fill='%233ecfb2'%3EW%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<!-- ============ SẢNH ============ -->
+<main id="home" class="screen home">
+  <div class="home-inner">
+    <header class="brand">
+      <div class="logo"><span class="logo-a">WRONG</span><span class="logo-b">WAY</span></div>
+      <p class="tagline">Đấu bot Python 1 chọi 1 · 2 hiệp đổi bên · xem trực tiếp từng nước đi</p>
+    </header>
+
+    <div class="choices" id="choices">
+      <button class="choice" data-mode="create" type="button">
+        <span class="choice-icon">＋</span>
+        <span class="choice-title">Tạo phòng</span>
+        <span class="choice-sub">Nhận mã 4 số rồi gửi cho bạn đấu</span>
+      </button>
+      <button class="choice" data-mode="join" type="button">
+        <span class="choice-icon">→</span>
+        <span class="choice-title">Vào phòng</span>
+        <span class="choice-sub">Nhập mã phòng bạn được gửi</span>
+      </button>
+    </div>
+
+    <form id="entryForm" class="entry hidden" novalidate>
+      <h2 id="formTitle">Tạo phòng</h2>
+      <label class="field">
+        <span>Tên</span>
+        <input name="name" maxlength="32" autocomplete="name" placeholder="Nguyễn Văn A" required>
+      </label>
+      <label class="field">
+        <span>MSSV</span>
+        <input name="mssv" maxlength="20" inputmode="numeric" placeholder="25127000" required>
+      </label>
+      <label class="field" id="roomField">
+        <span>ID phòng</span>
+        <input name="room" maxlength="4" inputmode="numeric" placeholder="0482" class="room-input">
+      </label>
+      <p class="form-error" id="formError"></p>
+      <div class="form-actions">
+        <button type="button" class="btn ghost" id="backBtn">Quay lại</button>
+        <button type="submit" class="btn primary" id="submitBtn">Tạo phòng</button>
+      </div>
+    </form>
+  </div>
+</main>
+
+<!-- ============ PHÒNG ĐẤU ============ -->
+<main id="arena" class="screen arena hidden">
+  <!-- Cột trái: thông tin phòng ở trên, thẻ P0 ở góc dưới -->
+  <aside class="col col-left">
+    <section class="panel room-box">
+      <div class="label">Phòng</div>
+      <div class="room-id">
+        <span id="roomId">----</span>
+        <button class="icon-btn" id="copyBtn" type="button" title="Sao chép link mời">Sao chép link</button>
+      </div>
+      <p class="room-status" id="roomStatus"></p>
+      <ol class="rounds" id="rounds"></ol>
+      <button class="btn ghost danger full" id="leaveBtn" type="button">Rời phòng</button>
+    </section>
+    <div class="slot slot-p0" id="slotP0"></div>
+  </aside>
+
+  <!-- Giữa: terminal -->
+  <section class="center">
+    <div class="term">
+      <div class="term-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="term-title" id="termTitle">wrongway — arena.py</span>
+        <span class="term-meta" id="termMeta"></span>
+      </div>
+      <div class="term-body">
+        <pre class="term-frame" id="frame"></pre>
+        <div class="term-log" id="log"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Cột phải: thẻ P1 ở góc trên, khu vực ADD BOT bên dưới -->
+  <aside class="col col-right">
+    <div class="slot slot-p1" id="slotP1"></div>
+    <section class="bots">
+      <div class="label">Khu vực bot</div>
+      <div id="botPanels" class="bot-list"></div>
+    </section>
+  </aside>
+</main>
+
+<!-- Đếm ngược -->
+<div id="countdown" class="overlay countdown hidden" aria-live="assertive">
+  <div class="cd-box">
+    <div class="cd-round" id="cdRound">Hiệp 1</div>
+    <div class="cd-num" id="cdNum">3</div>
+    <div class="cd-sub" id="cdSub"></div>
+  </div>
+</div>
+
+<!-- Kết quả -->
+<div id="resultModal" class="overlay hidden">
+  <div class="modal" id="resultBody" role="dialog" aria-modal="true"></div>
+</div>
+
+<div id="toasts" class="toasts"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

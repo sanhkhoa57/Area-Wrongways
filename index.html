@@ -136,8 +136,8 @@
     <h2 id="privacyTitle">🔒 Không ai xem được code bot của bạn</h2>
     <p class="sub" style="font-size:14px;line-height:1.6;color:inherit">
       Không ai có thể xem source code bot của bạn, kể cả Sanh Khoa (người tạo web) và đối thủ.
-      Code chỉ chạy ngay trong trình duyệt của bạn và không bao giờ được gửi qua mạng hay lưu ở máy chủ nào,
-      vì web này không có máy chủ. Đối thủ chỉ thấy các nước đi bot của bạn thực hiện.
+      Code chỉ chạy ngay trong trình duyệt của bạn và không bao giờ được gửi đi hay lưu ở đâu. Chỉ có bàn cờ và
+      nước đi của bot được truyền giữa hai người chơi (đã mã hóa). Đối thủ chỉ thấy các nước đi bot của bạn thực hiện.
     </p>
     <div class="modal-actions">
       <button class="btn go" type="button" id="privacyOk">Đã hiểu</button>
@@ -147,7 +147,7 @@
 
 <div id="toasts" class="toasts"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script src="web/bot.js"></script>
 <script src="web/host.js"></script>
 <script src="web/app.js"></script>

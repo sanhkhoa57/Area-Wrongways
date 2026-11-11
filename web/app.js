@@ -3,7 +3,7 @@
 /* =====================================================================
    Wrongway Online – client
    Không có máy chủ riêng: chủ phòng chạy Host (host.js) ngay trong trình duyệt,
-   mọi người nối với nhau qua PeerJS. Mọi thay đổi trạng thái đều do Host
+   mọi người nối với nhau qua broker MQTT công cộng (WebSocket). Mọi thay đổi trạng thái đều do Host
    gửi xuống (type: room / countdown / round_start / turn / ...).
    ===================================================================== */
 
@@ -38,43 +38,88 @@ const REASON = {
 };
 const STATUS_VI = { ok: 'ok', pass: 'pass', invalid: 'invalid', timeout: 'timeout', error: 'error' };
 
-/* ------------------------------------------------------------ Mạng (PeerJS) */
-/* Chủ phòng mở một Peer có id cố định `wrongway-area-<mã 4 số>`; người vào phòng
-   nối thẳng tới id đó. Nhờ vậy mã phòng tự không trùng: id đã bị chiếm thì chọn mã khác.
+/* ------------------------------------------------------------ Mạng (MQTT qua WebSocket) */
+/* Mọi máy nối ra một broker MQTT công cộng bằng WebSocket (cổng HTTPS), nên không phụ thuộc
+   NAT/tường lửa của từng nhà như WebRTC. Broker chỉ chuyển tin; tin được mã hóa AES-GCM bằng
+   khóa sinh từ mã phòng. Code bot KHÔNG bao giờ được gửi đi, chỉ có tín hiệu, bàn cờ và nước đi.
    Chủ phòng chạy Host (host.js) ngay trong trang; người vào phòng chỉ gửi/nhận tin. */
-const PEER_PREFIX = 'wrongway-area-';
-/* STUN giúp hai máy tìm thấy nhau; TURN (relay) dùng khi mạng chặn kết nối trực tiếp, ví dụ wifi trường/công ty hoặc 4G. */
-const ICE_CONFIG = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:global.stun.twilio.com:3478' },
-    {
-      urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'],
-      username: 'openrelayproject', credential: 'openrelayproject',
-    },
-  ],
-};
+const BROKERS = [
+  'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt',
+  'wss://test.mosquitto.org:8081',
+];
+const TOPIC = 'wrongway-area/v1/';
+const te = new TextEncoder();
+const td = new TextDecoder();
+const rid = () => Math.random().toString(36).slice(2, 10);
 
-function openPeer(id) {
+async function deriveKey(room) {
+  const base = await crypto.subtle.importKey('raw', te.encode('wrongway-area-v1:' + room), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: te.encode('wrongway-area-salt-v1'), iterations: 50000, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+function toB64(u8) { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); }
+function fromB64(s) { const b = atob(s); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
+async function seal(key, obj) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(JSON.stringify(obj))));
+  const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
+  return toB64(out);
+}
+async function unseal(key, text) {
+  const raw = fromB64(text);
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.subarray(0, 12) }, key, raw.subarray(12));
+  return JSON.parse(td.decode(pt));
+}
+
+function connectOne(url, clientId, will) {
   return new Promise((resolve, reject) => {
-    if (typeof Peer === 'undefined') return reject({ type: 'no-lib' });
-    const peer = id ? new Peer(id, { config: ICE_CONFIG }) : new Peer({ config: ICE_CONFIG });
-    const timer = setTimeout(() => { try { peer.destroy(); } catch { /* đã hủy */ } reject({ type: 'timeout' }); }, 15000);
-    peer.on('open', () => {
-      clearTimeout(timer);
-      peer.on('error', e => console.warn('peer error', e));
-      peer.on('disconnected', () => { try { peer.reconnect(); } catch { /* đã hủy */ } });
-      resolve(peer);
-    });
-    peer.on('error', e => { clearTimeout(timer); try { peer.destroy(); } catch { /* đã hủy */ } reject(e); });
+    if (typeof mqtt === 'undefined') return reject({ type: 'no-lib' });
+    const c = mqtt.connect(url, { clientId, clean: true, keepalive: 15, reconnectPeriod: 0, connectTimeout: 8000, will });
+    let settled = false;
+    const fail = e => { if (settled) return; settled = true; clearTimeout(timer); try { c.end(true); } catch { /* đã đóng */ } reject(e); };
+    const timer = setTimeout(() => fail({ type: 'timeout' }), 9500);
+    c.once('connect', () => { if (settled) return; settled = true; clearTimeout(timer); resolve(c); });
+    c.once('error', e => fail(e));
+    c.once('close', () => fail({ type: 'closed' }));
   });
+}
+function subscribe(c, topic) {
+  return new Promise((resolve, reject) => c.subscribe(topic, { qos: 1 }, err => (err ? reject(err) : resolve())));
+}
+
+/* Gửi tin theo đúng thứ tự (mã hóa là bất đồng bộ nên cần xếp hàng). */
+class Chan {
+  constructor(client, key) { this.client = client; this.key = key; this.q = Promise.resolve(); }
+  send(topic, obj) {
+    this.q = this.q.then(async () => {
+      const payload = await seal(this.key, obj);
+      this.client.publish(topic, payload, { qos: 1 });
+    }).catch(() => { /* bỏ qua tin lỗi, giữ hàng đợi sống */ });
+  }
+}
+/* Nhận tin theo đúng thứ tự, tự loại tin trùng (QoS 1 có thể gửi lặp). */
+function inbox(key, handle) {
+  let q = Promise.resolve();
+  const seen = new Set();
+  return payload => {
+    q = q.then(async () => {
+      let env;
+      try { env = await unseal(key, payload.toString()); } catch { return; }
+      if (!env || typeof env.i !== 'string' || seen.has(env.i)) return;
+      seen.add(env.i);
+      if (seen.size > 800) seen.delete(seen.values().next().value);
+      handle(env);
+    }).catch(() => { /* bỏ qua tin lỗi */ });
+  };
 }
 
 function netError(e, fallback) {
-  if (e && e.type === 'no-lib') return 'Không tải được thư viện kết nối (PeerJS). Kiểm tra mạng rồi tải lại trang.';
-  if (e && e.type === 'timeout') return 'Hết thời gian chờ máy chủ ghép phòng. Thử lại sau.';
-  if (e && e.type === 'connect-timeout') return 'Tìm thấy phòng nhưng không kết nối được. Mạng của bạn hoặc của chủ phòng đang chặn kết nối trực tiếp. Thử đổi sang 4G hoặc wifi khác rồi vào lại.';
-  if (e && e.type === 'peer-unavailable') return 'Không tìm thấy phòng này. Kiểm tra lại mã phòng, và chủ phòng phải đang mở trang.';
+  const t = e && e.type;
+  if (t === 'no-lib') return 'Không tải được thư viện kết nối (MQTT). Kiểm tra mạng rồi tải lại trang.';
+  if (t === 'no-broker') return 'Không kết nối được tới máy chủ trung chuyển. Hãy kiểm tra mạng, tắt VPN hoặc tiện ích chặn quảng cáo rồi thử lại.';
+  if (t === 'peer-unavailable') return 'Không tìm thấy phòng này. Kiểm tra lại mã phòng, và chủ phòng phải đang mở trang.';
   return fallback || 'Không kết nối được. Kiểm tra mạng rồi thử lại.';
 }
 
@@ -84,12 +129,15 @@ function dispatch(msg) {
 }
 
 const Net = {
-  peer: null,
-  conn: null,        // người vào phòng: kết nối tới chủ phòng
+  client: null,
+  chan: null,
+  code: null,
+  clientId: null,
+  conn: null,        // người vào phòng: đối tượng gửi tin tới chủ phòng
   host: null,        // chủ phòng: Host đang chạy trong trang
   engine: null,
   localConn: null,
-  remotes: new Set(),
+  remotes: new Map(),
   isHost: false,
 
   send(msg) {
@@ -102,55 +150,110 @@ const Net = {
     this.close();
     this.isHost = true;
     this.engine = new WW.Engine();            // bắt đầu tải Python (luật chơi) ngay
-    let peer = null, code = null;
-    for (let i = 0; i < 40 && !peer; i++) {
-      code = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
-      try { peer = await openPeer(PEER_PREFIX + code); }
-      catch (e) { if (!e || e.type !== 'unavailable-id') throw e; }
+    let found = null;
+    for (let i = 0; i < 20 && !found; i++) {
+      const code = String(Math.floor(Math.random() * 10000)).padStart(4, '0');
+      const hostTopic = `${TOPIC}${code}/host`;
+      let client = null, lastErr = null;
+      for (const url of BROKERS) {
+        try { client = await connectOne(url, 'wwh-' + rid(), { topic: hostTopic, payload: '', qos: 1, retain: true }); break; }
+        catch (e) { lastErr = e; }
+      }
+      if (!client) throw (lastErr && lastErr.type === 'no-lib') ? lastErr : { type: 'no-broker' };
+      // Mã đã có chủ phòng khác (tin "host" được giữ lại trên broker) thì chọn mã khác.
+      const taken = await new Promise(resolve => {
+        let seen = false;
+        const on = (t, p) => { if (t === hostTopic && p.length > 0) seen = true; };
+        client.on('message', on);
+        subscribe(client, hostTopic).then(() => setTimeout(() => { client.off('message', on); resolve(seen); }, 1200), () => resolve(true));
+      });
+      if (taken) { client.end(true); continue; }
+      found = { code, client };
     }
-    if (!peer) throw { type: 'timeout' };
-    this.peer = peer;
+    if (!found) throw { type: 'no-broker' };
+    const { code, client } = found;
+    const key = await deriveKey(code);
+    this.client = client; this.code = code;
+    this.chan = new Chan(client, key);
+    client.publish(`${TOPIC}${code}/host`, '1', { qos: 1, retain: true });
+
     this.localConn = { player: null, send: m => queueMicrotask(() => dispatch(m)) };
     this.host = new WW.Host(code, this.engine, () => setTimeout(() => backHomeIfHost(), 0));
-    peer.on('connection', dc => {
-      const wrap = { player: null, dc, send: m => { try { dc.send(m); } catch { /* đã đóng */ } } };
-      this.remotes.add(wrap);
-      dc.on('data', m => { if (m && typeof m === 'object' && this.host) this.host.handle(wrap, m); });
-      const gone = () => { this.remotes.delete(wrap); if (this.host) this.host.drop(wrap); };
-      dc.on('close', gone);
-      dc.on('error', gone);
+    const wrapFor = id => {
+      let w = this.remotes.get(id);
+      if (!w) {
+        w = { player: null, send: m => this.chan && this.chan.send(`${TOPIC}${code}/c/${id}`, { i: rid(), m }) };
+        this.remotes.set(id, w);
+      }
+      return w;
+    };
+    await subscribe(client, `${TOPIC}${code}/h`);
+    const hTopic = `${TOPIC}${code}/h`;
+    const receive = inbox(key, env => {
+      if (!this.host || typeof env.c !== 'string' || !env.m || typeof env.m !== 'object') return;
+      const wrap = wrapFor(env.c);
+      if (env.m.type === '__gone') { this.remotes.delete(env.c); this.host.drop(wrap); return; }
+      this.host.handle(wrap, env.m);
     });
+    client.on('message', (t, p) => { if (t === hTopic) receive(p); });
+    client.on('close', () => { if (this.client === client && S.room) { toast('Mất kết nối mạng. Phòng đã đóng.', 'bad'); backHome(); } });
     this.send({ type: 'create', name, mssv });
   },
 
   async startJoin(name, mssv, room) {
     this.close();
     this.isHost = false;
-    const peer = await openPeer(null);
-    this.peer = peer;
-    const conn = peer.connect(PEER_PREFIX + room, { reliable: true, serialization: 'json' });
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject({ type: 'connect-timeout' }), 30000);
-      conn.on('open', () => { clearTimeout(timer); resolve(); });
-      peer.on('error', e => { clearTimeout(timer); reject(e); });
-      conn.on('error', e => { clearTimeout(timer); reject(e); });
+    const key = await deriveKey(room);
+    const id = 'wwc-' + rid();
+    const hTopic = `${TOPIC}${room}/h`;
+    const hostTopic = `${TOPIC}${room}/host`;
+    const myTopic = `${TOPIC}${room}/c/${id}`;
+    const gone = await seal(key, { i: rid(), c: id, m: { type: '__gone' } });
+    // Thử lần lượt từng broker; phòng nằm ở broker nào thì tin "host" được giữ lại ở đó.
+    let client = null, sawBroker = false;
+    for (const url of BROKERS) {
+      let c;
+      try { c = await connectOne(url, id, { topic: hTopic, payload: gone, qos: 1, retain: false }); }
+      catch (e) { if (e && e.type === 'no-lib') throw e; continue; }
+      sawBroker = true;
+      const present = await new Promise(resolve => {
+        let done = false;
+        const on = (t, p) => { if (!done && t === hostTopic && p.length > 0) { done = true; resolve(true); } };
+        c.on('message', on);
+        subscribe(c, hostTopic).then(() => setTimeout(() => { if (!done) { done = true; resolve(false); } }, 2500), () => resolve(false));
+      });
+      if (present) { client = c; break; }
+      c.end(true);
+    }
+    if (!client) throw { type: sawBroker ? 'peer-unavailable' : 'no-broker' };
+    await subscribe(client, myTopic);
+    this.client = client; this.code = room; this.clientId = id;
+    this.chan = new Chan(client, key);
+    const receive = inbox(key, env => { if (env.m && typeof env.m === 'object') dispatch(env.m); });
+    client.on('message', (t, p) => {
+      if (t === myTopic) receive(p);
+      else if (t === hostTopic && p.length === 0 && this.client === client && S.room) {
+        toast('Chủ phòng đã thoát, phòng đã đóng.', 'bad'); backHome();
+      }
     });
-    this.conn = conn;
-    conn.on('data', dispatch);
-    conn.on('close', () => {
-      if (this.conn !== conn) return;
-      if (S.room) { toast('Mất kết nối tới chủ phòng. Bạn đã bị đưa về sảnh.', 'bad'); backHome(); }
-    });
+    client.on('close', () => { if (this.client === client && S.room) { toast('Mất kết nối mạng. Bạn đã bị đưa về sảnh.', 'bad'); backHome(); } });
+    this.conn = { open: true, send: m => this.chan && this.chan.send(hTopic, { i: rid(), c: id, m }) };
     this.send({ type: 'join', name, mssv, room });
   },
 
   close() {
-    const { peer, engine } = this;
-    this.peer = null; this.conn = null; this.host = null; this.engine = null;
+    const { client, engine, chan, code, isHost, clientId } = this;
+    this.client = null; this.chan = null; this.code = null; this.clientId = null;
+    this.conn = null; this.host = null; this.engine = null;
     this.localConn = null; this.isHost = false; this.remotes.clear();
     if (engine) engine.dispose();
+    if (!client) return;
+    try {
+      if (isHost) chan.q = chan.q.then(() => client.publish(`${TOPIC}${code}/host`, '', { qos: 1, retain: true }));   // xóa dấu "phòng đang mở" sau các tin còn xếp hàng
+      else if (chan) chan.send(`${TOPIC}${code}/h`, { i: rid(), c: clientId, m: { type: '__gone' } });
+    } catch { /* đã đóng */ }
     // Chờ một chút để tin cuối (closed / left) kịp tới nơi trước khi ngắt kết nối.
-    if (peer) setTimeout(() => { try { peer.destroy(); } catch { /* đã hủy */ } }, 600);
+    setTimeout(() => { try { client.end(true); } catch { /* đã đóng */ } }, 800);
   },
 };
 

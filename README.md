@@ -2,23 +2,23 @@
 
 Web đấu bot Wrongway 1 chọi 1, mỗi trận 2 hiệp đổi bên, xem trực tiếp từng nước đi trên một terminal ở giữa màn hình.
 
-Đây là **web tĩnh, không có máy chủ**. Mọi thứ chạy trong trình duyệt, nên đưa lên GitHub Pages hoặc Vercel là dùng được, miễn phí và luôn bật.
+Đây là **web tĩnh, không có máy chủ riêng**. Luật chơi và bot chạy trong trình duyệt, nên đưa lên GitHub Pages hoặc Vercel là dùng được, miễn phí và luôn bật. Các máy nói chuyện với nhau qua một broker MQTT công cộng.
 
 ## Cách hoạt động
 
 ```
-Trình duyệt A (chủ phòng)                          Trình duyệt B
-┌────────────────────────────┐   PeerJS (WebRTC)   ┌─────────────────────┐
-│ Host (host.js)             │◄───────────────────►│ app.js              │
-│  ├ luật chơi: environment.py│  prepare / act_req  │ bot.js              │
-│  │   (Pyodide, worker)      │  act_res / turn …   │  └ bot của B        │
-│  └ bot của A (Pyodide)      │                     │     (Pyodide, worker)│
-└────────────────────────────┘                     └─────────────────────┘
+Trình duyệt A (chủ phòng)                       Trình duyệt B
+┌────────────────────────────┐   broker MQTT   ┌─────────────────────┐
+│ Host (host.js)             │◄───────────────►│ app.js              │
+│  ├ luật chơi: environment.py│   WebSocket     │ bot.js              │
+│  │   (Pyodide, worker)      │   (mã hóa)      │  └ bot của B        │
+│  └ bot của A (Pyodide)      │                 │     (Pyodide, worker)│
+└────────────────────────────┘                 └─────────────────────┘
 ```
 
-- **Phòng chơi:** chủ phòng mở một kết nối PeerJS có id `wrongway-area-<mã 4 số>`, người kia nhập mã để nối thẳng tới. Id đã bị chiếm thì tự chọn mã khác, nên hai phòng không bao giờ trùng mã.
+- **Phòng chơi:** chủ phòng chọn mã 4 số rồi giữ chỗ trên broker MQTT công cộng (thử lần lượt EMQX, HiveMQ, Mosquitto). Người kia nhập mã để vào cùng phòng. Mã đã có người dùng thì tự chọn mã khác. Kết nối đi qua WebSocket/HTTPS nên không bị ảnh hưởng bởi NAT hay tường lửa ở nhà như WebRTC.
 - **Luật chơi:** vẫn là `wrongway/environment.py` nguyên bản, chạy bằng Pyodide (Python trong trình duyệt) trên máy chủ phòng.
-- **Bot:** chạy bằng Pyodide trong Web Worker **trên máy của chính người viết bot**. Mỗi lượt chủ phòng gửi quan sát, bot trả về nước đi. Code bot không bao giờ rời khỏi máy của người viết, và máy chủ không phải chạy code lạ.
+- **Bot:** chạy bằng Pyodide trong Web Worker **trên máy của chính người viết bot**. Mỗi lượt chủ phòng gửi quan sát, bot trả về nước đi. Code bot không bao giờ rời khỏi máy của người viết. Chỉ có bàn cờ và nước đi được truyền qua broker, và đã mã hóa AES-GCM bằng khóa sinh từ mã phòng.
 - **Quá giờ:** bot nghĩ quá 2 giây thì worker bị dừng, lượt đó bị bỏ, lượt sau nạp lại code (giống bản Python gốc). Giới hạn là 2 giây thay vì 1 giây vì Python trong trình duyệt chậm hơn.
 
 Bot dùng được thư viện chuẩn của Python và các gói Pyodide có sẵn như `numpy` (tự tải khi `import`).
@@ -36,7 +36,7 @@ Bot dùng được thư viện chuẩn của Python và các gói Pyodide có s�
 
 - **Chủ phòng phải giữ nguyên tab.** Chủ phòng đóng tab hoặc mất mạng thì phòng đóng. Người vào phòng thoát giữa trận thì trận bị hủy.
 - Lần đầu vào phòng, trình duyệt tải Python (khoảng 10 MB từ CDN, sau đó được cache), nên có thể mất vài giây.
-- Kết nối trực tiếp (WebRTC) đôi khi không thông được qua một số mạng công ty hoặc trường học chặn. Khi đó thử đổi mạng (ví dụ 4G).
+- Web phụ thuộc vào các broker MQTT công cộng miễn phí. Nếu cả ba broker cùng sập thì không tạo hoặc vào phòng được (hiếm gặp). Tên và MSSV có đi qua broker, nhưng đã mã hóa bằng khóa sinh từ mã 4 số nên chỉ chống được người tò mò, không chống được người cố tình dò.
 - Kết quả trận do trình duyệt của chủ phòng tính. Đây là web để đấu giao hữu, không phải hệ thống chấm điểm chống gian lận.
 
 ## Chạy thử trên máy
@@ -62,7 +62,7 @@ Không cần build, không cần biến môi trường.
 ├── index.html              # sảnh + phòng đấu
 ├── web/
 │   ├── style.css
-│   ├── app.js              # giao diện, kết nối PeerJS, terminal, ADD BOT, kết quả
+│   ├── app.js              # giao diện, kết nối MQTT, terminal, ADD BOT, kết quả
 │   ├── host.js             # "máy chủ" phòng chạy trong trình duyệt chủ phòng
 │   ├── bot.js              # bọc Web Worker chạy bot, giới hạn thời gian
 │   ├── worker_bot.js       # Pyodide chạy bot của người chơi

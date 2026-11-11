@@ -109,6 +109,21 @@
   <div class="modal" id="resultBody" role="dialog" aria-modal="true"></div>
 </div>
 
+<!-- Thông báo riêng tư: hiện mỗi lần mở trang -->
+<div id="privacyModal" class="overlay" style="z-index:60">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
+    <h2 id="privacyTitle">🔒 Không ai xem được code bot của bạn</h2>
+    <p class="sub" style="font-size:14px;line-height:1.6;color:inherit">
+      Không ai có thể xem source code bot của bạn, kể cả Sanh Khoa (người tạo web) và đối thủ.
+      Code chỉ chạy ngay trong trình duyệt của bạn và không bao giờ được gửi qua mạng hay lưu ở máy chủ nào,
+      vì web này không có máy chủ. Đối thủ chỉ thấy các nước đi bot của bạn thực hiện.
+    </p>
+    <div class="modal-actions">
+      <button class="btn go" type="button" id="privacyOk">Đã hiểu</button>
+    </div>
+  </div>
+</div>
+
 <div id="toasts" class="toasts"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>

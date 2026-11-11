@@ -774,3 +774,8 @@ fetch('wrongway/submissions/TEMPLATE.py').then(r => r.text()).then(t => {
 
 const preset = new URLSearchParams(location.search).get('room');
 if (preset && /^\d{4}$/.test(preset)) openForm('join', preset);
+
+/* Thông báo riêng tư: hiện mỗi lần mở trang, không ghi nhớ "đã xem". */
+$('#privacyOk').addEventListener('click', () => $('#privacyModal').classList.add('hidden'));
+$('#privacyModal').addEventListener('click', e => { if (e.target.id === 'privacyModal') e.target.classList.add('hidden'); });
+$('#privacyOk').focus();

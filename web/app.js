@@ -43,11 +43,22 @@ const STATUS_VI = { ok: 'ok', pass: 'pass', invalid: 'invalid', timeout: 'timeou
    nối thẳng tới id đó. Nhờ vậy mã phòng tự không trùng: id đã bị chiếm thì chọn mã khác.
    Chủ phòng chạy Host (host.js) ngay trong trang; người vào phòng chỉ gửi/nhận tin. */
 const PEER_PREFIX = 'wrongway-area-';
+/* STUN giúp hai máy tìm thấy nhau; TURN (relay) dùng khi mạng chặn kết nối trực tiếp, ví dụ wifi trường/công ty hoặc 4G. */
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:global.stun.twilio.com:3478' },
+    {
+      urls: ['turn:openrelay.metered.ca:80', 'turn:openrelay.metered.ca:443', 'turns:openrelay.metered.ca:443?transport=tcp'],
+      username: 'openrelayproject', credential: 'openrelayproject',
+    },
+  ],
+};
 
 function openPeer(id) {
   return new Promise((resolve, reject) => {
     if (typeof Peer === 'undefined') return reject({ type: 'no-lib' });
-    const peer = id ? new Peer(id) : new Peer();
+    const peer = id ? new Peer(id, { config: ICE_CONFIG }) : new Peer({ config: ICE_CONFIG });
     const timer = setTimeout(() => { try { peer.destroy(); } catch { /* đã hủy */ } reject({ type: 'timeout' }); }, 15000);
     peer.on('open', () => {
       clearTimeout(timer);
@@ -62,6 +73,7 @@ function openPeer(id) {
 function netError(e, fallback) {
   if (e && e.type === 'no-lib') return 'Không tải được thư viện kết nối (PeerJS). Kiểm tra mạng rồi tải lại trang.';
   if (e && e.type === 'timeout') return 'Hết thời gian chờ máy chủ ghép phòng. Thử lại sau.';
+  if (e && e.type === 'connect-timeout') return 'Tìm thấy phòng nhưng không kết nối được. Mạng của bạn hoặc của chủ phòng đang chặn kết nối trực tiếp. Thử đổi sang 4G hoặc wifi khác rồi vào lại.';
   if (e && e.type === 'peer-unavailable') return 'Không tìm thấy phòng này. Kiểm tra lại mã phòng, và chủ phòng phải đang mở trang.';
   return fallback || 'Không kết nối được. Kiểm tra mạng rồi thử lại.';
 }
@@ -118,7 +130,7 @@ const Net = {
     this.peer = peer;
     const conn = peer.connect(PEER_PREFIX + room, { reliable: true, serialization: 'json' });
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject({ type: 'peer-unavailable' }), 15000);
+      const timer = setTimeout(() => reject({ type: 'connect-timeout' }), 30000);
       conn.on('open', () => { clearTimeout(timer); resolve(); });
       peer.on('error', e => { clearTimeout(timer); reject(e); });
       conn.on('error', e => { clearTimeout(timer); reject(e); });

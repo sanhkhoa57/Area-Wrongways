@@ -16,12 +16,12 @@ def _error_text(exc):
         return type(exc).__name__
 
 
-def check_code(code, max_bytes=200000):
+def check_code(code, max_bytes=3000000):
     """Kiểm tra nhanh trước khi Sẵn sàng. Trả về chuỗi lỗi hoặc None."""
     if not isinstance(code, str) or not code.strip():
         return "Bạn chưa dán mã nguồn bot."
     if len(code.encode("utf-8")) > max_bytes:
-        return "Mã nguồn quá lớn (tối đa {} KB).".format(max_bytes // 1000)
+        return "Mã nguồn quá lớn (tối đa {} MB).".format(max_bytes // 1000000)
     try:
         tree = ast.parse(code, filename="bot.py")
     except SyntaxError as exc:

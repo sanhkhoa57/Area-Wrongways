@@ -464,7 +464,7 @@ function buildMyPanel() {
     const file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 200000) return showCodeError('File quá lớn (tối đa 200 KB).');
+    if (file.size > 3000000) return showCodeError('File quá lớn (tối đa 3 MB).');
     ta.value = await file.text();
     ta.dispatchEvent(new Event('input'));
     toast(`Đã nạp ${file.name}`, 'good');

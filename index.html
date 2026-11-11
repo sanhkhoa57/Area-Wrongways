@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Wrongway Arena · Online</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="web/style.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1013'/%3E%3Ctext x='16' y='23' font-family='monospace' font-weight='800' font-size='20' text-anchor='middle' fill='%233ecfb2'%3EW%3C/text%3E%3C/svg%3E">
 </head>
@@ -11,20 +14,22 @@
 
 <!-- ============ SẢNH ============ -->
 <main id="home" class="screen home">
+  <nav class="nav">
+    <span class="nav-logo"><span class="nav-mark">W</span>Wrongway</span>
+    <a class="nav-link" href="https://github.com/sanhkhoa57/Area-Wrongways" target="_blank" rel="noopener">GitHub</a>
+  </nav>
   <div class="home-inner">
     <header class="brand">
-      <div class="logo"><span class="logo-a">WRONG</span><span class="logo-b">WAY</span></div>
-      <p class="tagline">Đấu bot Python 1 chọi 1 · 2 hiệp đổi bên · xem trực tiếp từng nước đi</p>
+      <h1 class="logo"><span class="logo-a">Wrong</span><span class="logo-b">way</span></h1>
+      <p class="tagline">Đấu bot Python 1 chọi 1, 2 hiệp đổi bên.<br>Xem trực tiếp từng nước đi.</p>
     </header>
 
     <div class="choices" id="choices">
       <button class="choice" data-mode="create" type="button">
-        <span class="choice-icon">＋</span>
         <span class="choice-title">Tạo phòng</span>
         <span class="choice-sub">Nhận mã 4 số rồi gửi cho bạn đấu</span>
       </button>
       <button class="choice" data-mode="join" type="button">
-        <span class="choice-icon">→</span>
         <span class="choice-title">Vào phòng</span>
         <span class="choice-sub">Nhập mã phòng bạn được gửi</span>
       </button>
@@ -50,6 +55,22 @@
         <button type="submit" class="btn primary" id="submitBtn">Tạo phòng</button>
       </div>
     </form>
+
+    <!-- Minh họa cách chơi (không tương tác) -->
+    <section class="peek" aria-label="Cách hoạt động">
+      <div class="peek-top">
+        <span>$ python arena.py --render</span>
+        <span class="tag">2 hiệp</span>
+      </div>
+      <div class="peek-body">
+        <div class="peek-h">Thông tin trận đấu</div>
+        <div class="peek-row"><i class="peek-dot"></i><span>Bàn cờ</span><b>9 × 9, mỗi người 10 tường</b></div>
+        <div class="peek-row"><i class="peek-dot"></i><span>Thời gian mỗi nước</span><b>2 giây</b></div>
+        <div class="peek-row"><i class="peek-dot"></i><span>Tính điểm</span><b>Thắng 3 · Hòa 1 · Thua 0</b></div>
+        <div class="peek-hl"><i class="peek-dot"></i>Code bot chỉ chạy trên máy bạn, không ai xem được<span class="kbd">🔒</span></div>
+      </div>
+      <div class="peek-foot">Wrongway <span class="sp">Tạo phòng</span><span class="kbd">1</span> Vào phòng <span class="kbd">2</span></div>
+    </section>
   </div>
 </main>
 

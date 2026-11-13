@@ -274,8 +274,8 @@ const Net = {
       if (problem) { if (problem.startsWith('Không tải được Python')) return fail(problem); continue; }
       const botMssv = file.replace(/\.py$/, '');
       const conn = { player: null, send: m => queueMicrotask(() => this.botReceive(host, conn, ai, code, m)) };
-      host.handle(conn, { type: 'join', name: `Bot ${botMssv}`, mssv: botMssv });
-      termLog(`Đối thủ của bạn: Bot ${botMssv}.`, 'muted');
+      host.handle(conn, { type: 'join', name: botName, mssv: botMssv });
+      termLog(`Đối thủ của bạn: ${botName}.`, 'muted');
       return;
     }
     fail('Không tìm được bot hợp lệ trong kho.');

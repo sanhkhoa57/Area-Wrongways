@@ -69,11 +69,13 @@ class Player {
     this.room = null;
     this.ready = false;
     this.hasBot = false;
+    this.trade = false;        // đã bấm TRADE BOT, chờ người kia đồng ý
+    this.lastChat = 0;
   }
   send(msg) { this.conn.send(msg); }
   pub(room) {
     return {
-      id: this.id, name: this.name, mssv: this.mssv, ready: this.ready, has_bot: this.hasBot,
+      id: this.id, name: this.name, mssv: this.mssv, ready: this.ready, has_bot: this.hasBot, trade: this.trade,
       is_host: room.hostId === this.id, role: room.roleOf(this.id),
     };
   }
@@ -207,6 +209,42 @@ class Host {
       return;
     }
 
+    if (kind === 'chat') {
+      const text = typeof msg.text === 'string' ? msg.text.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 500) : '';
+      const now = Date.now();
+      if (!text || now - player.lastChat < 250) return;
+      player.lastChat = now;
+      room.broadcast({ type: 'chat', from: player.id, name: player.name, text, ts: now });
+      return;
+    }
+
+    /* TRADE BOT: cả hai cùng bật thì báo "trade_go"; mỗi máy tự gửi code của mình (chia nhỏ),
+       chủ phòng chỉ chuyển tiếp sang người kia. */
+    if (kind === 'trade') {
+      const other = room.players.find(p => p !== player);
+      if (msg.on && !other) return this.err(conn, 'Chưa có người chơi thứ hai để trade.');
+      if (msg.on && room.busy) return this.err(conn, 'Đang thi đấu, chờ hết trận rồi trade.');
+      player.trade = !!msg.on;
+      if (player.trade && other.trade) {
+        player.trade = other.trade = false;
+        room.tradeId = (room.tradeId || 0) + 1;
+        room.broadcast({ type: 'trade_go', id: room.tradeId, host: room.hostId });
+      } else if (player.trade) {
+        other.send({ type: 'notice', message: `${player.name} muốn trade bot. Bấm TRADE BOT để đồng ý.` });
+      }
+      room.sync();
+      return;
+    }
+
+    if (kind === 'trade_part') {
+      const other = room.players.find(p => p !== player);
+      const ok = other && msg.id === room.tradeId && Number.isInteger(msg.seq) && Number.isInteger(msg.total)
+        && msg.total >= 1 && msg.total <= 100 && msg.seq >= 0 && msg.seq < msg.total
+        && typeof msg.data === 'string' && msg.data.length <= 64000;
+      if (ok) other.send({ type: 'trade_part', id: msg.id, from: player.id, seq: msg.seq, total: msg.total, data: msg.data });
+      return;
+    }
+
     if (kind === 'ping') return player.send({ type: 'pong' });
     this.err(conn, 'Lệnh không hợp lệ.');
   }
@@ -234,6 +272,7 @@ class Host {
     player.room = null;
     player.conn.player = null;
     player.ready = false;
+    for (const p of room.players) p.trade = false;
 
     if (wasHost) {
       // Chủ phòng cũng là máy chủ: chủ phòng thoát thì phòng đóng.
@@ -255,6 +294,7 @@ class Host {
     const room = this.room;
     room.token++;
     room.results = [];
+    for (const p of room.players) p.trade = false;   // yêu cầu trade đang chờ bị hủy khi vào trận
     this.runSeries(room.token);   // tự bắt mọi lỗi bên trong
   }
 

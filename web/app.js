@@ -29,6 +29,8 @@ const S = {
   myPanel: null,
   drawerOpen: false,
   vsBot: false,        // đang ở chế độ đấu với máy
+  tradeOffer: null,    // code mình sẽ gửi khi cả hai đồng ý trade (lấy lúc bấm TRADE BOT)
+  trade: null,         // lần trade gần nhất: { id, hostId, left, right, parts, total }
   pending: false,     // đã gửi "ready", đang chờ server trả lời
   template: '',
   lastSummary: null,
@@ -348,6 +350,9 @@ const handlers = {
     S.live = null;
     renderRoom();
   },
+  chat(m) { addChat(m); },
+  trade_go(m) { startTrade(m); },
+  trade_part(m) { onTradePart(m); },
   closed(m) { toast(m.reason, 'bad'); backHome(); },
   left() { backHome(); },
   pong() {},
@@ -439,6 +444,12 @@ function enterArena() {
   S.live = null;
   S.drawerOpen = false;
   $('#copyBtn').classList.toggle('hidden', S.vsBot);
+  $('#chatBox').classList.toggle('hidden', S.vsBot);
+  $('#tradeBox').classList.toggle('hidden', S.vsBot);
+  $('#chatLog').replaceChildren();
+  $('#chatInput').value = '';
+  S.trade = null; S.tradeOffer = null;
+  closeTradeView();
   $('.room-box .label').textContent = S.vsBot ? 'Đấu với máy' : 'Phòng';
   if (S.vsBot) {
     history.replaceState(null, '', location.pathname);
@@ -460,6 +471,8 @@ function enterArena() {
 
 function backHome() {
   S.room = null; S.me = null; S.live = null; S.pending = false; S.readyCode = null; S.vsBot = false;
+  S.trade = null; S.tradeOffer = null;
+  closeTradeView();
   if (S.bot) { S.bot.dispose(); S.bot = null; }
   Net.close();
   hideCountdown(); closeModal();
@@ -759,7 +772,176 @@ function renderPanels() {
   if (list.firstElementChild !== el) list.prepend(el);
   while (list.children.length > 1) list.lastElementChild.remove();
   list.appendChild(oppEl);
+  renderTrade();
 }
+
+/* ---------------------------------------------------------------- Chat */
+function addChat(m) {
+  const log = $('#chatLog');
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  const row = document.createElement('div');
+  row.className = 'msg' + (m.from === S.me ? ' me' : '');
+  const time = new Date(m.ts).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+  const head = document.createElement('div');
+  head.className = 'msg-head';
+  head.innerHTML = `<b>${esc(m.from === S.me ? 'Bạn' : m.name)}</b><time>${time}</time>`;
+  const body = document.createElement('div');
+  body.className = 'msg-text';
+  body.textContent = m.text;
+  row.append(head, body);
+  log.appendChild(row);
+  while (log.childElementCount > 200) log.firstElementChild.remove();
+  if (atBottom || m.from === S.me) log.scrollTop = log.scrollHeight;
+}
+
+$('#chatForm').addEventListener('submit', e => {
+  e.preventDefault();
+  const input = $('#chatInput');
+  const text = input.value.trim();
+  if (!text || !S.room) return;
+  send({ type: 'chat', text });
+  input.value = '';
+});
+
+/* ----------------------------------------------------------- TRADE BOT */
+const TRADE_CHUNK = 48000;   // ký tự mỗi gói, để vừa giới hạn tin nhắn của broker công cộng
+
+function renderTrade() {
+  const r = S.room;
+  if (!r || S.vsBot) return;
+  const me = playerById(S.me);
+  const opp = r.players.find(p => p.id !== S.me) || null;
+  const btn = $('#tradeBtn'), chip = $('#tradeChip');
+  let label = '⇄ TRADE BOT', cls = 'btn full trade-btn', chipTxt = '', chipCls = 'chip';
+  if (!opp) { label = 'Chờ người chơi thứ hai'; }
+  else if (me?.trade) { label = 'Hủy yêu cầu trade'; cls += ' warn'; chipTxt = `Chờ ${opp.name} đồng ý`; }
+  else if (opp.trade) { label = 'Đồng ý trade'; cls += ' go'; chipTxt = `${opp.name} muốn trade`; chipCls += ' on'; }
+  btn.className = cls;
+  btn.textContent = label;
+  btn.disabled = !opp || busy();
+  chip.className = chipCls;
+  chip.textContent = chipTxt;
+  chip.classList.toggle('hidden', !chipTxt);
+  $('#tradeReopen').classList.toggle('hidden', !S.trade);
+}
+
+$('#tradeBtn').addEventListener('click', () => {
+  const me = playerById(S.me);
+  if (!me || busy()) return;
+  if (me.trade) { S.tradeOffer = null; send({ type: 'trade', on: false }); return; }
+  const code = S.myPanel ? $('.code', S.myPanel).value : '';
+  if (!code.trim()) { toast('Bạn chưa có code trong ô ADD BOT để trade.', 'bad'); return; }
+  S.tradeOffer = code;
+  send({ type: 'trade', on: true });
+});
+$('#tradeReopen').addEventListener('click', () => { if (S.trade) openTradeView(); });
+
+function startTrade(m) {
+  const mine = S.tradeOffer ?? (S.myPanel ? $('.code', S.myPanel).value : '');
+  S.tradeOffer = null;
+  const r = S.room;
+  const hostP = r && playerById(m.host);
+  const guestP = r && r.players.find(p => p.id !== m.host);
+  const side = p => ({ name: p?.name ?? '?', mssv: p?.mssv ?? '?', code: p?.id === S.me ? mine : null, me: p?.id === S.me });
+  S.trade = { id: m.id, left: side(hostP), right: side(guestP), parts: [], got: 0, total: 0 };
+  // Gửi code của mình thành nhiều gói nhỏ; chủ phòng chuyển tiếp sang người kia.
+  const total = Math.max(1, Math.ceil(mine.length / TRADE_CHUNK));
+  for (let seq = 0; seq < total; seq++) {
+    send({ type: 'trade_part', id: m.id, seq, total, data: mine.slice(seq * TRADE_CHUNK, (seq + 1) * TRADE_CHUNK) });
+  }
+  toast('Hai bên đã đồng ý trade bot.', 'good');
+  openTradeView();
+  renderTrade();
+}
+
+function onTradePart(m) {
+  const t = S.trade;
+  if (!t || m.id !== t.id) return;
+  if (t.parts[m.seq] === undefined) { t.parts[m.seq] = m.data; t.got++; }
+  t.total = m.total;
+  const other = t.left.me ? t.right : t.left;
+  if (t.got === t.total) other.code = t.parts.join('');
+  if (!$('#tradeView').classList.contains('hidden')) renderTradeView();
+}
+
+/* Tô màu Python đơn giản (từ khóa, chuỗi, comment, số, tên hàm/lớp, decorator). */
+const PY_KW = 'False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield';
+const PY_RE = new RegExp([
+  /(#[^\n]*)/.source,
+  /([rRbBuUfF]{0,2}(?:"""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'))/.source,
+  `\\b(def|class)(\\s+)([A-Za-z_]\\w*)`,
+  `\\b(${PY_KW})\\b`,
+  /\b(self|print|len|range|min|max|abs|int|float|str|list|dict|set|tuple|enumerate|zip|sorted|isinstance|any|all|sum|map|filter)\b/.source,
+  /(\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/.source,
+  /(@[A-Za-z_][\w.]*)/.source,
+].join('|'), 'g');
+
+function highlightPy(src) {
+  let out = '', last = 0, m;
+  PY_RE.lastIndex = 0;
+  while ((m = PY_RE.exec(src))) {
+    out += esc(src.slice(last, m.index));
+    if (m[1]) out += `<span class="tk-c">${esc(m[1])}</span>`;
+    else if (m[2]) out += `<span class="tk-s">${esc(m[2])}</span>`;
+    else if (m[3]) out += `<span class="tk-k">${m[3]}</span>${m[4]}<span class="tk-f">${m[5]}</span>`;
+    else if (m[6]) out += `<span class="tk-k">${m[6]}</span>`;
+    else if (m[7]) out += `<span class="tk-b">${m[7]}</span>`;
+    else if (m[8]) out += `<span class="tk-n">${m[8]}</span>`;
+    else if (m[9]) out += `<span class="tk-d">${esc(m[9])}</span>`;
+    last = PY_RE.lastIndex;
+    if (m[0].length === 0) PY_RE.lastIndex++;
+  }
+  return out + esc(src.slice(last));
+}
+
+function paneHtml(side, role) {
+  const file = `${esc(side.mssv)}.py`;
+  const who = `${esc(side.name)}${side.me ? ' (bạn)' : ''} · ${role}`;
+  const head = `<div class="tv-tab"><span class="tv-file">🐍 ${file}</span><span class="tv-who">${who}</span>
+    <span class="tv-tools">${side.code != null ? '<button class="btn tiny" data-tv="copy">Sao chép</button><button class="btn tiny" data-tv="save">Tải về</button>' : ''}</span></div>`;
+  if (side.code == null) {
+    const t = S.trade;
+    const pct = t.total ? Math.round(t.got / t.total * 100) : 0;
+    return head + `<div class="tv-wait"><span class="pulse"></span>Đang nhận code của ${esc(side.name)}… ${pct ? pct + '%' : ''}</div>`;
+  }
+  const lines = side.code.split('\n').length;
+  const nums = Array.from({ length: lines }, (_, i) => i + 1).join('\n');
+  return head + `<div class="tv-code"><pre class="tv-gutter">${nums}</pre><pre class="tv-src"><code>${highlightPy(side.code)}</code></pre></div>
+    <div class="tv-status"><span>Python</span><span>${lines} dòng · ${(new Blob([side.code]).size / 1024).toFixed(1)} KB</span></div>`;
+}
+
+function renderTradeView() {
+  const t = S.trade;
+  if (!t) return;
+  for (const [id, side, role] of [['#tvLeft', t.left, 'Chủ phòng'], ['#tvRight', t.right, 'Người chơi']]) {
+    const pane = $(id);
+    const key = side.code == null ? `wait:${t.got}` : `code:${t.id}`;
+    if (pane.dataset.key === key) continue;           // không vẽ lại code dài khi không đổi
+    pane.dataset.key = key;
+    pane.innerHTML = paneHtml(side, role);
+    pane.onclick = e => {
+      const act = e.target.closest('[data-tv]')?.dataset.tv;
+      if (!act || side.code == null) return;
+      if (act === 'copy') navigator.clipboard.writeText(side.code).then(() => toast('Đã sao chép code.', 'good'), () => toast('Không sao chép được.', 'bad'));
+      if (act === 'save') {
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([side.code], { type: 'text/x-python' }));
+        a.download = `${side.mssv}.py`;
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      }
+    };
+  }
+}
+
+function openTradeView() {
+  $('#tvLeft').dataset.key = ''; $('#tvRight').dataset.key = '';
+  renderTradeView();
+  $('#tradeView').classList.remove('hidden');
+}
+function closeTradeView() { $('#tradeView').classList.add('hidden'); }
+$('#tradeClose').addEventListener('click', closeTradeView);
+$('#tradeView').addEventListener('click', e => { if (e.target.id === 'tradeView') closeTradeView(); });
 
 /* ---------------------------------------------------------- Terminal */
 function colorFrame(text) {
@@ -972,7 +1154,7 @@ $('#copyBtn').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(link); toast('Đã sao chép link mời: ' + link, 'good'); }
   catch { toast('Link mời: ' + link); }
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeBotModal(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeBotModal(); closeTradeView(); } });
 
 fetch('wrongway/submissions/TEMPLATE.py').then(r => r.text()).then(t => {
   S.template = t;

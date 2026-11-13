@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="web/style.css?v=8">
+  <link rel="stylesheet" href="web/style.css?v=9">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1013'/%3E%3Ctext x='16' y='23' font-family='monospace' font-weight='800' font-size='20' text-anchor='middle' fill='%233ecfb2'%3EW%3C/text%3E%3C/svg%3E">
 </head>
 <body>
@@ -92,6 +92,15 @@
       <ol class="rounds" id="rounds"></ol>
       <button class="btn ghost danger full" id="leaveBtn" type="button">Rời phòng</button>
     </section>
+    <!-- Chat giữa 2 người (chỉ ở chế độ đấu với người) -->
+    <section class="panel chat" id="chatBox">
+      <div class="label">Chat</div>
+      <div class="chat-log" id="chatLog" aria-live="polite"></div>
+      <form class="chat-form" id="chatForm" autocomplete="off">
+        <input id="chatInput" maxlength="500" placeholder="Nhắn cho đối thủ…" aria-label="Tin nhắn">
+        <button class="btn tiny go" type="submit">Gửi</button>
+      </form>
+    </section>
     <div class="slot slot-p0" id="slotP0"></div>
   </aside>
 
@@ -117,6 +126,13 @@
       <div class="label">Khu vực bot</div>
       <div id="botPanels" class="bot-list"></div>
     </section>
+    <!-- TRADE BOT: hai bên cùng đồng ý thì xem code của nhau -->
+    <section class="panel trade-box" id="tradeBox">
+      <div class="trade-head"><span class="label">Trade bot</span><span class="chip" id="tradeChip"></span></div>
+      <p class="hint">Hai bên cùng bấm thì code của cả hai hiện cạnh nhau: chủ phòng bên trái, người chơi bên phải. Đối thủ sẽ thấy toàn bộ code đang có trong ô ADD BOT của bạn.</p>
+      <button class="btn full trade-btn" id="tradeBtn" type="button">⇄ TRADE BOT</button>
+      <button class="btn ghost tiny full hidden" id="tradeReopen" type="button">Xem lại code đã trade</button>
+    </section>
   </aside>
 </main>
 
@@ -132,6 +148,21 @@
 <!-- Kết quả -->
 <div id="resultModal" class="overlay hidden">
   <div class="modal" id="resultBody" role="dialog" aria-modal="true"></div>
+</div>
+
+<!-- Xem code sau khi trade: chia đôi như 2 cửa sổ editor -->
+<div id="tradeView" class="overlay trade-view hidden">
+  <div class="tv" role="dialog" aria-modal="true" aria-label="Code đã trade">
+    <div class="tv-bar">
+      <span class="dots"><i></i><i></i><i></i></span>
+      <span class="tv-title">TRADE BOT — code của hai bên</span>
+      <button class="btn tiny ghost" type="button" id="tradeClose">Đóng</button>
+    </div>
+    <div class="tv-split">
+      <section class="tv-pane" id="tvLeft"></section>
+      <section class="tv-pane" id="tvRight"></section>
+    </div>
+  </div>
 </div>
 
 <!-- Xác nhận đấu với máy -->
@@ -166,8 +197,8 @@
 <div id="toasts" class="toasts"></div>
 
 <script src="web/vendor/mqtt.min.js"></script>
-<script src="web/bot.js?v=8"></script>
-<script src="web/host.js?v=8"></script>
-<script src="web/app.js?v=8"></script>
+<script src="web/bot.js?v=9"></script>
+<script src="web/host.js?v=9"></script>
+<script src="web/app.js?v=9"></script>
 </body>
 </html>

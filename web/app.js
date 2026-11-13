@@ -273,6 +273,7 @@ const Net = {
       if (this.host !== host) return;
       if (problem) { if (problem.startsWith('Không tải được Python')) return fail(problem); continue; }
       const botMssv = file.replace(/\.py$/, '');
+      const botName = botMssv.replace(/^bot/i, 'Bot ');
       const conn = { player: null, send: m => queueMicrotask(() => this.botReceive(host, conn, ai, code, m)) };
       host.handle(conn, { type: 'join', name: botName, mssv: botMssv });
       termLog(`Đối thủ của bạn: ${botName}.`, 'muted');

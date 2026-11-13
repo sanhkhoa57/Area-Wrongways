@@ -32,6 +32,10 @@ Bot dùng được thư viện chuẩn của Python và các gói Pyodide có s�
 5. Hết hiệp 1, hai bên đổi chỗ, đếm ngược rồi chạy hiệp 2.
 6. Bảng tổng kết hiện kết quả từng hiệp và người thắng chung cuộc. Điểm: thắng 3, hòa 1, thua 0. Bằng điểm thì hòa.
 
+### Đấu với máy
+
+Bấm **Đấu với máy** → **Tiếp tục** để vào trận với 1 bot chọn ngẫu nhiên trong thư mục `bots/` (danh sách ở `bots/index.json`). Không cần mạng hay người thứ hai: luật chơi, bot của bạn và bot máy đều chạy trong trình duyệt của bạn. Dán code, bấm **Sẵn sàng** là bot máy cũng sẵn sàng theo. Muốn thêm bot vào kho thì chép file `.py` vào `bots/` rồi thêm tên file vào `bots/index.json`.
+
 ## Lưu ý khi dùng
 
 - **Chủ phòng phải giữ nguyên tab.** Chủ phòng đóng tab hoặc mất mạng thì phòng đóng. Người vào phòng thoát giữa trận thì trận bị hủy.
@@ -60,6 +64,7 @@ Không cần build, không cần biến môi trường.
 
 ```
 ├── index.html              # sảnh + phòng đấu
+├── bots/                   # kho tàng bot cho chế độ Đấu với máy (index.json + các file .py)
 ├── web/
 │   ├── style.css
 │   ├── app.js              # giao diện, kết nối MQTT, terminal, ADD BOT, kết quả

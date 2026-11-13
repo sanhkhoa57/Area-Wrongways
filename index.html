@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="web/style.css?v=7">
+  <link rel="stylesheet" href="web/style.css?v=8">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1013'/%3E%3Ctext x='16' y='23' font-family='monospace' font-weight='800' font-size='20' text-anchor='middle' fill='%233ecfb2'%3EW%3C/text%3E%3C/svg%3E">
 </head>
 <body>
@@ -32,6 +32,10 @@
       <button class="choice" data-mode="join" type="button">
         <span class="choice-title">Vào phòng</span>
         <span class="choice-sub">Nhập mã phòng bạn được gửi</span>
+      </button>
+      <button class="choice" data-mode="bot" type="button">
+        <span class="choice-title">Đấu với máy</span>
+        <span class="choice-sub">Gặp ngẫu nhiên 1 bot trong kho tàng bot</span>
       </button>
     </div>
 
@@ -130,6 +134,20 @@
   <div class="modal" id="resultBody" role="dialog" aria-modal="true"></div>
 </div>
 
+<!-- Xác nhận đấu với máy -->
+<div id="botModal" class="overlay hidden">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="botTitle">
+    <h2 id="botTitle">🤖 Đấu với máy</h2>
+    <p class="sub" style="font-size:14px;line-height:1.6;color:inherit">
+      Bạn sẽ được đấu ngẫu nhiên với 1 con bot trong kho tàng bot.
+    </p>
+    <div class="modal-actions">
+      <button class="btn ghost" type="button" id="botBack">Quay lại</button>
+      <button class="btn go" type="button" id="botGo">Tiếp tục</button>
+    </div>
+  </div>
+</div>
+
 <!-- Thông báo riêng tư: hiện mỗi lần mở trang -->
 <div id="privacyModal" class="overlay" style="z-index:60">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="privacyTitle">
@@ -148,8 +166,8 @@
 <div id="toasts" class="toasts"></div>
 
 <script src="web/vendor/mqtt.min.js"></script>
-<script src="web/bot.js?v=7"></script>
-<script src="web/host.js?v=7"></script>
-<script src="web/app.js?v=7"></script>
+<script src="web/bot.js?v=8"></script>
+<script src="web/host.js?v=8"></script>
+<script src="web/app.js?v=8"></script>
 </body>
 </html>

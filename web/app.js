@@ -28,7 +28,8 @@ const S = {
   emptyCards: [null, null],
   myPanel: null,
   drawerOpen: false,
-  pending: false,      // đã gửi "ready", đang chờ server trả lời
+  vsBot: false,        // đang ở chế độ đấu với máy
+  pending: false,     // đã gửi "ready", đang chờ server trả lời
   template: '',
   lastSummary: null,
 };
@@ -136,6 +137,7 @@ const Net = {
   conn: null,        // người vào phòng: đối tượng gửi tin tới chủ phòng
   host: null,        // chủ phòng: Host đang chạy trong trang
   engine: null,
+  ai: null,          // đấu với máy: WW.Bot chạy bot đối thủ
   localConn: null,
   remotes: new Map(),
   isHost: false,
@@ -241,12 +243,71 @@ const Net = {
     this.send({ type: 'join', name, mssv, room });
   },
 
+  /* Đấu với máy: chạy Host ngay trong trang, không cần broker. Đối thủ là một bot ngẫu nhiên
+     trong kho (bots/index.json), chạy trong một worker Pyodide riêng và trả lời như người chơi thật. */
+  async startBot(name, mssv) {
+    this.close();
+    this.isHost = true;
+    this.engine = new WW.Engine();
+    this.localConn = { player: null, send: m => queueMicrotask(() => dispatch(m)) };
+    this.host = new WW.Host('BOT', this.engine, () => setTimeout(() => backHomeIfHost(), 0));
+    this.send({ type: 'create', name, mssv });
+    this.summonBot(this.host, mssv);
+  },
+
+  async summonBot(host, myMssv) {
+    const ai = new WW.Bot();
+    this.ai = ai;
+    const fail = text => { if (this.host === host) { toast(text, 'bad'); termLog(`✖ ${text}`, 'bad'); } };
+    let list;
+    try { list = await (await fetch('bots/index.json', { cache: 'no-cache' })).json(); }
+    catch { return fail('Không tải được danh sách bot.'); }
+    list = list.filter(f => typeof f === 'string' && f.replace(/\.py$/, '') !== myMssv);
+    for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; }
+    for (const file of list.slice(0, 8)) {
+      if (this.host !== host) return;
+      let code;
+      try { const r = await fetch('bots/' + encodeURIComponent(file)); if (!r.ok) continue; code = await r.text(); }
+      catch { continue; }
+      const problem = await ai.check(code);
+      if (this.host !== host) return;
+      if (problem) { if (problem.startsWith('Không tải được Python')) return fail(problem); continue; }
+      const botMssv = file.replace(/\.py$/, '');
+      const conn = { player: null, send: m => queueMicrotask(() => this.botReceive(host, conn, ai, code, m)) };
+      host.handle(conn, { type: 'join', name: `Bot ${botMssv}`, mssv: botMssv });
+      termLog(`Đối thủ của bạn: Bot ${botMssv}.`, 'muted');
+      return;
+    }
+    fail('Không tìm được bot hợp lệ trong kho.');
+  },
+
+  /* Bot máy nhận tin từ Host giống một người chơi: nạp code, trả nước đi, tự sẵn sàng khi bạn sẵn sàng. */
+  botReceive(host, conn, ai, code, m) {
+    if (this.host !== host) return;
+    const reply = msg => { if (this.host === host) host.handle(conn, msg); };
+    if (m.type === 'prepare') {
+      ai.load(code, m.seed).then(r => reply({ type: 'prepared', id: m.id, ok: r.ok, error: r.error ?? null }));
+    } else if (m.type === 'act_req') {
+      ai.act(m.obs).then(r => reply({
+        type: 'act_res', id: m.id, status: r.status, action: r.action, elapsed: r.elapsed, error: r.error,
+      }));
+    } else if (m.type === 'room') {
+      // Đọc trạng thái thật của Host (không dùng bản chụp trong tin) để không gửi "ready" hai lần.
+      queueMicrotask(() => {
+        const room = host.room, self = conn.player;
+        const human = room.players.find(p => p !== self);
+        if (self && human && human.ready && !self.ready && !room.busy) reply({ type: 'ready' });
+      });
+    }
+  },
+
   close() {
-    const { client, engine, chan, code, isHost, clientId } = this;
+    const { client, engine, chan, code, isHost, clientId, ai } = this;
     this.client = null; this.chan = null; this.code = null; this.clientId = null;
-    this.conn = null; this.host = null; this.engine = null;
+    this.conn = null; this.host = null; this.engine = null; this.ai = null;
     this.localConn = null; this.isHost = false; this.remotes.clear();
     if (engine) engine.dispose();
+    if (ai) ai.dispose();
     if (!client) return;
     try {
       if (isHost) chan.q = chan.q.then(() => client.publish(`${TOPIC}${code}/host`, '', { qos: 1, retain: true }));   // xóa dấu "phòng đang mở" sau các tin còn xếp hàng
@@ -376,8 +437,16 @@ function enterArena() {
   S.termMode = 'idle';
   S.live = null;
   S.drawerOpen = false;
-  history.replaceState(null, '', `?room=${S.room.id}`);
-  termLog(`Đã vào phòng ${S.room.id}. Bấm ADD BOT, dán code theo TEMPLATE.py rồi bấm Sẵn sàng.`, 'muted');
+  $('#copyBtn').classList.toggle('hidden', S.vsBot);
+  $('.room-box .label').textContent = S.vsBot ? 'Đấu với máy' : 'Phòng';
+  if (S.vsBot) {
+    history.replaceState(null, '', location.pathname);
+    termLog('Chế độ đấu với máy. Đang chọn ngẫu nhiên 1 bot trong kho tàng bot…', 'muted');
+    termLog('Bấm ADD BOT, dán code theo TEMPLATE.py rồi bấm Sẵn sàng.', 'muted');
+  } else {
+    history.replaceState(null, '', `?room=${S.room.id}`);
+    termLog(`Đã vào phòng ${S.room.id}. Bấm ADD BOT, dán code theo TEMPLATE.py rồi bấm Sẵn sàng.`, 'muted');
+  }
   // Bot chạy ngay trên máy mình bằng Python trong trình duyệt (Pyodide): bắt đầu tải từ giờ.
   if (S.bot) S.bot.dispose();
   S.bot = new WW.Bot();
@@ -389,7 +458,7 @@ function enterArena() {
 }
 
 function backHome() {
-  S.room = null; S.me = null; S.live = null; S.pending = false; S.readyCode = null;
+  S.room = null; S.me = null; S.live = null; S.pending = false; S.readyCode = null; S.vsBot = false;
   if (S.bot) { S.bot.dispose(); S.bot = null; }
   Net.close();
   hideCountdown(); closeModal();
@@ -407,8 +476,11 @@ function busy() { return S.room && (S.room.status === 'countdown' || S.room.stat
 function renderRoom() {
   const r = S.room;
   if (!r) return;
-  $('#roomId').textContent = r.id;
-  const statusText = {
+  $('#roomId').textContent = S.vsBot ? '🤖 BOT' : r.id;
+  const statusText = S.vsBot && r.status === 'lobby'
+    ? (r.players.length < 2 ? 'Đang chọn ngẫu nhiên 1 bot trong kho tàng bot…' : 'Dán code bot của bạn và bấm Sẵn sàng để đấu với máy.')
+    : S.vsBot && r.status === 'finished' ? 'Đã xong 2 hiệp. Bấm Sẵn sàng để đấu lại với bot này.'
+    : {
     lobby: r.players.length < 2
       ? 'Đang chờ người chơi thứ hai. Gửi mã phòng cho bạn đấu.'
       : 'Hai bên dán code bot và bấm Sẵn sàng để bắt đầu.',
@@ -423,7 +495,7 @@ function renderRoom() {
   if (S.termMode === 'idle' && r.preview) {
     setFrame(r.preview);
     $('#termTitle').textContent = 'wrongway — arena.py';
-    $('#termMeta').textContent = r.players.length < 2 ? 'chờ đối thủ' : 'sảnh chờ';
+    $('#termMeta').textContent = r.players.length < 2 ? (S.vsBot ? 'đang chọn bot' : 'chờ đối thủ') : 'sảnh chờ';
   }
 }
 
@@ -471,7 +543,8 @@ function fillCard(el, p, idx) {
   el.innerHTML = `
     <div class="card-top">
       <span class="role-badge">${role}</span>
-      ${p.is_host ? '<span class="tag host">♛ Chủ phòng</span>' : ''}
+      ${p.is_host && !S.vsBot ? '<span class="tag host">♛ Chủ phòng</span>' : ''}
+      ${S.vsBot && !isMe ? '<span class="tag">🤖 Máy</span>' : ''}
       ${isMe ? '<span class="tag you">Bạn</span>' : ''}
     </div>
     <div class="card-main">
@@ -486,7 +559,9 @@ function emptyCard(idx) {
   if (!S.emptyCards[idx]) S.emptyCards[idx] = document.createElement('div');
   const el = S.emptyCards[idx];
   el.className = `card empty role-p${idx}`;
-  el.innerHTML = `<div><span class="pulse"></span>Đang chờ người chơi…</div>
+  el.innerHTML = S.vsBot
+    ? `<div><span class="pulse"></span>Đang chọn bot ngẫu nhiên…</div>`
+    : `<div><span class="pulse"></span>Đang chờ người chơi…</div>
     <div style="margin-top:8px">Mã phòng <b>${esc(S.room.id)}</b></div>`;
   return el;
 }
@@ -671,7 +746,9 @@ function renderPanels() {
         <span class="chip ${chipCls}">${chipTxt}</span>
       </div>
       <button class="btn add-bot" type="button" disabled><span>🔒 ADD BOT</span></button>
-      <p class="hint">Chỉ ${esc(opp.name)} thao tác được phần này. Code của đối thủ không được gửi tới máy bạn.</p>`;
+      <p class="hint">${S.vsBot
+        ? 'Bot được chọn ngẫu nhiên trong kho tàng bot và tự chạy trên máy bạn. Nó tự sẵn sàng khi bạn sẵn sàng.'
+        : `Chỉ ${esc(opp.name)} thao tác được phần này. Code của đối thủ không được gửi tới máy bạn.`}</p>`;
   } else {
     oppEl.innerHTML = `
       <div class="bot-head"><div class="bot-who"><b>Người chơi thứ hai</b><small>chưa vào phòng</small></div><span class="chip">Trống</span></div>
@@ -818,7 +895,7 @@ function showResults(sum) {
 
   $('#resultBody').innerHTML = `
     <h2>Tổng kết trận đấu</h2>
-    <p class="sub">Phòng ${esc(S.room.id)} · seed ${sum.seed} · thắng 3 điểm, hòa 1, thua 0</p>
+    <p class="sub">${S.vsBot ? 'Đấu với máy' : 'Phòng ' + esc(S.room.id)} · seed ${sum.seed} · thắng 3 điểm, hòa 1, thua 0</p>
     ${champion}
     <table class="res">
       <thead><tr><th>Hiệp</th><th>P0 (đi lên)</th><th>P1 (đi xuống)</th><th>Kết quả</th><th class="num">Lượt</th></tr></thead>
@@ -867,7 +944,24 @@ function toast(text, kind = '') {
 }
 
 /* --------------------------------------------------------------- Khởi động */
-document.querySelectorAll('.choice').forEach(b => b.addEventListener('click', () => openForm(b.dataset.mode)));
+document.querySelectorAll('.choice').forEach(b => b.addEventListener('click', () => {
+  if (b.dataset.mode === 'bot') { $('#botModal').classList.remove('hidden'); $('#botGo').focus(); }
+  else openForm(b.dataset.mode);
+}));
+
+/* Đấu với máy: xác nhận rồi vào trận ngay, dùng tên/MSSV đã lưu (nếu có). */
+const closeBotModal = () => $('#botModal').classList.add('hidden');
+$('#botBack').addEventListener('click', closeBotModal);
+$('#botModal').addEventListener('click', e => { if (e.target.id === 'botModal') closeBotModal(); });
+$('#botGo').addEventListener('click', async () => {
+  closeBotModal();
+  const name = store.get('ww_name') || 'Bạn';
+  const mssvStored = store.get('ww_mssv');
+  const mssv = /^[A-Za-z0-9]{3,20}$/.test(mssvStored) ? mssvStored : 'guest';
+  S.vsBot = true;
+  try { await Net.startBot(name, mssv); }
+  catch (err) { S.vsBot = false; Net.close(); toast(netError(err, 'Không bắt đầu được trận đấu với máy.'), 'bad'); }
+});
 $('#backBtn').addEventListener('click', closeForm);
 $('#entryForm').addEventListener('submit', submitEntry);
 $('#entryForm').room.addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 4); });
@@ -877,7 +971,7 @@ $('#copyBtn').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(link); toast('Đã sao chép link mời: ' + link, 'good'); }
   catch { toast('Link mời: ' + link); }
 });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeModal(); closeBotModal(); } });
 
 fetch('wrongway/submissions/TEMPLATE.py').then(r => r.text()).then(t => {
   S.template = t;
